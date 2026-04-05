@@ -1,6 +1,12 @@
 ### <a name="_b7urdng99y53"></a>**Название задачи: Автоматизация процессов связанных с кормлением, безопасностью и мониторингом поголовья скота.** 
 ### <a name="_hjk0fkfyohdk"></a>**Автор: Степан Дильман**
-### <a name="_uanumrh8zrui"></a>**Дата: 28-03-2026**
+### <a name="_uanumrh8zrui"></a>**Дата: 05-04-2026**
+
+### <a name="_66emqiqjji09"></a>**Глоссарий**
+|**№**|**Термин**|**Определение**|
+| :-: | :- | :- |
+|1|Edge-сервер|Вычислительный узел, физически расположенный на территории фермы (на «краю» системы)|
+
 ### <a name="_3bfxc9a45514"></a>**Функциональные требования**
 |**№**|**Действующие лица или системы**|**Use Case**|**Описание**|
 | :-: | :- | :- | :- |
@@ -27,8 +33,8 @@
 |3|иметь высокую производительность — от момента возникновения нештатной ситуации, зафиксированной с помощью видеоаналитики, должно проходить не более 5 секунд до момента оповещения|
 |4|позволять системе видеоаналитики реагировать в реальном времени (миллисекунды)|
 
+
 ### <a name="_qmphm5d6rvi3"></a>**Решение**
-Приведите диаграммы контекста и контейнеров в модели C4. Опишите там основные компоненты и интеграции всех элементов решения.
 
 ```plantuml
 @startuml C1_Context
@@ -40,32 +46,52 @@ title C1: Система управления фермой - контекст
 actor "Зоотехник" as Zootech
 actor "Дежурный сотрудник" as LocalOperator
 
-node "ЦС АгроПромХ" as AgroPromCS {
-  component "IoT-шлюз (контейнер)" as IoTGateway
-  component "Брокер сообщений (Kafka-контейнер)" as KafkaBroker
+rectangle "Облако (ЦС АгроПромХ)" #LightGray {
+  node "IoT-шлюз" as IoTGateway
+  node "Брокер Kafka" as KafkaBroker
 }
 
-node "ЦС АгроПромХ - Животноводство" as ArchMS {
-  node "Контекст: Кормление" as Feeding
-  node "Контекст: Безопасность" as Security
-  node "Контекст: Мониторинг" as Monitoring
-  component "Локальная система оповещения" as LocalAlerting
+rectangle "Граница фермы" #LightBlue {
+  
+  node "ЦС АгроПромХ - Животноводство\n(Edge-сервер фермы)" as ArchMS {
+    node "Контекст: Кормление" as Feeding
+    node "Контекст: Безопасность" as Security
+    node "Контекст: Мониторинг" as Monitoring
+    component "Локальная система оповещения" as LocalAlerting
+  }
+  
+  node "Физические устройства" as Devices {
+    database "Кормушки/поилки" as Feeders
+    database "Датчики" as Sensors
+    database "Видеокамеры" as Cameras
+  }
 }
 
+' Пользователи
 Zootech --> Feeding : управляет кормлением
 Zootech --> Security : следит за безопасностью
 Zootech --> Monitoring : просматривает статус
 Zootech --> LocalAlerting : получает уведомления
 
-LocalOperator --> LocalAlerting : получает уведомления\n(при отсутствии интернета)
+LocalOperator --> LocalAlerting : получает уведомления (офлайн)
 
-AgroPromCS <-- Feeding : передает данные
-AgroPromCS <-- Security : передает данные
-AgroPromCS <-- Monitoring : передает данные
+' Устройства на ферме
+Cameras --> Monitoring : видеопоток (RTSP)
+Sensors --> Security : телеметрия
+Feeders --> Feeding : телеметрия
+Feeding --> Feeders : команды управления
 
-Feeding --> LocalAlerting : создает предупреждения
-Security --> LocalAlerting : создает сигналы безопасности
-Monitoring --> LocalAlerting : создает сигналы мониторинга
+' Оповещение
+Feeding --> LocalAlerting : предупреждения
+Security --> LocalAlerting : сигналы безопасности
+Monitoring --> LocalAlerting : сигналы мониторинга
+
+' Синхронизация с облаком (задержка до 10 минут)
+Feeding --> IoTGateway : передача данных
+Security --> IoTGateway : передача данных
+Monitoring --> IoTGateway : передача данных
+
+IoTGateway --> KafkaBroker : публикация
 
 @enduml
 ```
@@ -78,47 +104,51 @@ Monitoring --> LocalAlerting : создает сигналы мониторин�
 
 ```plantuml
 @startuml C1_Alt
+
 skinparam shadowing false
 skinparam componentStyle rectangle
 skinparam actorStyle awesome
-title C1: Система управления фермой - контекст
+title C1: Система управления фермой - контекст (упрощённая)
 
 actor "Зоотехник" as Zootech #LightBlue
 actor "Дежурный сотрудник" as LocalOperator #LightYellow
 
-node "Существующая ЦС\nАгроПромХ" as CentralSystem #LightGray {
+rectangle "Облако (ЦС АгроПромХ)" #LightGray {
   component "IoT-шлюз" as IoTGateway
 }
 
-package "Система управления фермой" as FarmSystem #LightPink {
-  component "Управление фермой" as FarmController
+rectangle "Граница фермы" #LightPink {
+
+  package "Система управления фермой (монолит)" as FarmSystem {
+    component "Управление фермой" as FarmController
+  }
+  
+  queue "Уведомления" as Notifications
+  
+  node "Физические устройства" as Devices {
+    database "Кормушки и поилки" as Feeders
+    database "Датчики" as Sensors
+    database "Видеокамеры" as Cameras
+  }
 }
 
-queue "Уведомления" as Notifications
-
-node "Физические устройства на ферме" as Devices {
-  database "Кормушки и поилки" as Feeders
-  database "Датчики" as Sensors
-  database "Видеокамеры" as Cameras
-}
-
-' === Пользователи ===
+' Пользователи
 Zootech --> FarmSystem : управляет кормлением\nнастраивает аналитику\nполучает отчёты
 
 LocalOperator --> Notifications : получает SMS/звук\n(при отсутствии интернета)
 
-' === Физические устройства ===
-Feeders --> FarmSystem : телеметрия\n(уровень корма, расход)
-FarmSystem --> Feeders : команды\n(дозировка, расписание)
+' Физические устройства
+Feeders --> FarmSystem : телеметрия
+FarmSystem --> Feeders : команды
 
-Sensors --> FarmSystem : температура,\nвлажность, газ, вес
+Sensors --> FarmSystem : показания
 
 Cameras --> FarmSystem : видеопоток RTSP
 
-' === Уведомления ===
-FarmSystem --> Notifications : события\n(драка, задавливание,\nаномалии)
+' Уведомления
+FarmSystem --> Notifications : события
 
-' === Существующая ЦС ===
+' Синхронизация с облаком
 FarmSystem --> IoTGateway : синхронизация данных\n(задержка до 10 минут)
 
 @enduml
@@ -128,12 +158,31 @@ FarmSystem --> IoTGateway : синхронизация данных\n(задер
 **Недостатки, ограничения, риски**
 
 *Основное решение (распределенное)*
+
+Преимущества:
+
 - Высокая масштабируемость — каждый контекст масштабируется независимо
 - Отказоустойчивость — изоляция контекстов локализует сбои
 - Расширяемость без изменений существующего — новый функционал добавляется как отдельный контекст
 
+Недостатки и риски:
+
+- Высокая сложность разработки и развёртывания
+- Требуются эксперты по распределённым системам и Kafka
+- Высокие операционные затраты (кластер из сервисов)
+- Долгий вывод на рынок
+
 *Альтернативное решение (монолитное)*
+
+Преимущества:
+
 - Быстрый вывод на рынок
 - Низкий порог входа для команды — не требуются эксперты по распределённым системам
 - Минимальные операционные затраты — один сервер и одна база данных вместо кластера
 
+Недостатки и риски:
+
+- Низкая отказоустойчивость — падение любого компонента останавливает всю систему
+- Плохая расширяемость — изменения затрагивают весь монолит
+- Ограниченная масштабируемость
+- Невозможно гарантировать 99.95% доступности
