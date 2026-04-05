@@ -33,49 +33,56 @@
 skinparam shadowing false
 skinparam componentStyle rectangle
 skinparam nodeStyle plain
-title C4: Контейнеры (C2) - ЦС АгроПромХ Животноводство
+title C2: Контейнеры - ЦС АгроПромХ Животноводство
 
 actor "Зоотехник" as Zootech
 actor "Администратор" as Admin
 actor "Дежурный сотрудник на ферме" as LocalOperator
 
-node "ЦС АгроПромХ (существующая система)" as ExistingCS {
-  component "IoT-шлюз" as IoTGateway
-  component "Брокер сообщений Kafka" as KafkaBroker
+rectangle "Облако (ЦС АгроПромХ)" #LightGray {
+  component "IoT-шлюз" as IoTGateway <<gRPC/HTTPS>>
+  component "Брокер Kafka" as KafkaBroker <<Kafka Protocol>>
 }
 
-node "ЦС АгроПромХ - Животноводство (ваша подсистема)" as ArchMS {
-  
-  component "Локальная система оповещения" as LocalAlerting
-  
-  node "Контекст: Кормление" as Feeding {
-    component "Периферийные устройства" as Peripheral
-    component "Обработка и аналитика данных" as DataProcessing
-    component "Локальное хранилище данных" as LocalStorage
-    component "Менеджер управления устройствами" as DeviceManager
-  }
-  
-  node "Контекст: Безопасность" as Security {
-    component "Периферийные устройства безопасности" as SecPeripheral
-    component "Обработка и аналитика безопасности" as SecDataProcessing
-    component "Локальное хранилище безопасности" as SecLocalStorage
-  }
-  
-  node "Контекст: Мониторинг поведения" as Monitoring {
-    component "Периферийные устройства мониторинга" as MonPeripheral
-    node "Обработка и аналитика мониторинга" as MonDataProcessing {
-      component "Нейросетевой адаптер паттернов поведения" as NeuralBehaviorAdapter
+rectangle "Граница фермы" #LightBlue {
+
+  node "ЦС АгроПромХ - Животноводство (Edge-сервер фермы)" as ArchMS {
+    
+    component "Локальная система оповещения" as LocalAlerting <<SMS/Telegram/WebSocket>>
+    
+    node "Контекст: Кормление" as Feeding {
+      component "Периферийные устройства" as Peripheral <<Modbus/MQTT/OPC UA>>
+      component "Обработка и аналитика данных" as DataProcessing <<Python/Java>>
+      component "Локальное хранилище данных" as LocalStorage <<TimescaleDB/InfluxDB>>
+      component "Менеджер управления устройствами" as DeviceManager <<Адаптеры производителей>>
     }
-    component "Локальное хранилище мониторинга" as MonLocalStorage
+    
+    node "Контекст: Безопасность" as Security {
+      component "Периферийные устройства безопасности" as SecPeripheral <<Modbus/MQTT>>
+      component "Обработка и аналитика безопасности" as SecDataProcessing <<Python/Java>>
+      component "Локальное хранилище безопасности" as SecLocalStorage <<TimescaleDB>>
+    }
+    
+    node "Контекст: Мониторинг поведения" as Monitoring {
+      component "Периферийные устройства мониторинга" as MonPeripheral <<RTSP/ONVIF>>
+      node "Обработка и аналитика мониторинга" as MonDataProcessing {
+        component "Нейросетевой адаптер паттернов поведения" as NeuralBehaviorAdapter <<ONNX/TensorRT>>
+      }
+      component "Локальное хранилище мониторинга" as MonLocalStorage <<MinIO/Redis>>
+    }
+    
+    component "Система аутентификации и авторизации" as AuthZ <<Keycloak/OAuth2/JWT>>
+    component "API для внешних систем" as ExternalAPI <<REST/GraphQL/WebSocket>>
+    component "Пользовательские метрики" as UserDefinedMetrics <<Prometheus/OpenMetrics>>
+    component "Менеджер синхронизации с ЦС" as SyncManager <<gRPC/HTTPS+Zstd>>
   }
   
-  component "Система аутентификации и авторизации" as AuthZ
-  component "API для внешних систем" as ExternalAPI
-  component "Пользовательские метрики" as UserDefinedMetrics
-  component "Менеджер синхронизации с ЦС" as SyncManager
+  node "Физические устройства" as Devices {
+    database "Кормушки/поилки" as Feeders <<Modbus/MQTT>>
+    database "Датчики" as Sensors <<Modbus/MQTT>>
+    database "Видеокамеры" as Cameras <<RTSP/ONVIF>>
+  }
 }
-
-' ===== СВЯЗИ =====
 
 ' Пользователи
 Zootech --> Peripheral : управляет устройствами
@@ -88,48 +95,56 @@ Zootech --> LocalAlerting : получает уведомления
 Zootech --> AuthZ : выполняет вход/права
 
 Admin --> AuthZ : управляет ролями
-LocalOperator --> LocalAlerting : получает уведомления
+LocalOperator --> LocalAlerting : получает уведомления (SMS/Telegram/звук)
+
+' Устройства на ферме
+Cameras --> MonPeripheral : RTSP/ONVIF
+Sensors --> SecPeripheral : Modbus/MQTT
+Feeders --> Peripheral : Modbus/MQTT (телеметрия)
+Peripheral --> Feeders : Modbus/MQTT (команды)
 
 ' Кормление
-Peripheral --> LocalStorage : пишет данные
-Peripheral --> DeviceManager : получает команды
-DeviceManager --> Peripheral : управляет кормушками/поилками
-DataProcessing <--> LocalStorage : обмен данными
-DataProcessing --> LocalAlerting : создает предупреждения
+Peripheral --> LocalStorage : запись телеметрии
+Peripheral --> DeviceManager : получение команд
+DeviceManager --> Peripheral : управление устройствами
+DataProcessing <--> LocalStorage : SQL/TimescaleDB
+DataProcessing --> LocalAlerting : gRPC/внутренний вызов
 
 ' Безопасность
-SecPeripheral --> SecLocalStorage : пишет данные
-SecDataProcessing <--> SecLocalStorage : обмен данными
-SecDataProcessing --> LocalAlerting : создает сигналы безопасности
+SecPeripheral --> SecLocalStorage : запись телеметрии
+SecDataProcessing <--> SecLocalStorage : SQL
+SecDataProcessing --> LocalAlerting : gRPC/внутренний вызов
 
 ' Мониторинг поведения
-MonPeripheral --> NeuralBehaviorAdapter : видеопоток
-NeuralBehaviorAdapter --> "Нейросетевая модель\n(предоставлена партнёрами)" : использует
-MonDataProcessing <--> MonLocalStorage : обмен данными
-MonDataProcessing --> LocalAlerting : создает сигналы мониторинга
+MonPeripheral --> NeuralBehaviorAdapter : видеокадры (Shared Memory/gRPC)
+NeuralBehaviorAdapter --> "Нейросетевая модель" : ONNX/TensorRT
+MonDataProcessing <--> MonLocalStorage : S3/Redis
+MonDataProcessing --> LocalAlerting : gRPC/внутренний вызов
 
-' ===== Синхронизация =====
-LocalStorage --> SyncManager : отправка данных
-SecLocalStorage --> SyncManager : отправка данных
-MonLocalStorage --> SyncManager : отправка данных
-UserDefinedMetrics --> SyncManager : отправка метрик
+' Синхронизация с облаком (задержка до 10 минут)
+LocalStorage --> SyncManager : данные
+SecLocalStorage --> SyncManager : данные
+MonLocalStorage --> SyncManager : данные
+UserDefinedMetrics --> SyncManager : метрики
 
-SyncManager --> IoTGateway : синхронизация (задержка до 10 минут)
+SyncManager --> IoTGateway : gRPC/HTTPS (сжатие Zstd)
 
-IoTGateway --> KafkaBroker : передает телеметрию
-KafkaBroker --> DataProcessing : доставляет данные кормления
-KafkaBroker --> SecDataProcessing : доставляет данные безопасности
-KafkaBroker --> MonDataProcessing : доставляет данные мониторинга
+' Облачная ЦС
+IoTGateway --> KafkaBroker : Kafka Protocol
+KafkaBroker --> DataProcessing : Kafka Consumer
+KafkaBroker --> SecDataProcessing : Kafka Consumer
+KafkaBroker --> MonDataProcessing : Kafka Consumer
 
-' ===== API и внешние системы =====
-AuthZ --> ExternalAPI : авторизует запросы
-SyncManager --> ExternalAPI : предоставляет данные
-LocalStorage --> UserDefinedMetrics : базовые метрики
-SecLocalStorage --> UserDefinedMetrics : базовые метрики
-MonLocalStorage --> UserDefinedMetrics : базовые метрики
+' API и внешние системы
+AuthZ --> ExternalAPI : авторизация (JWT)
+SyncManager --> ExternalAPI : предоставляет данные (REST/GraphQL)
+LocalStorage --> UserDefinedMetrics : экспорт метрик (Prometheus)
+SecLocalStorage --> UserDefinedMetrics : экспорт метрик
+MonLocalStorage --> UserDefinedMetrics : экспорт метрик
 
 @enduml
 ```
+
 |**№**|**Принцип решения**|
 | :-: | :- |
 |1|Используем подход DDD в решении, разделяем решение на контексты.|
@@ -143,36 +158,45 @@ MonLocalStorage --> UserDefinedMetrics : базовые метрики
 skinparam shadowing false
 skinparam componentStyle rectangle
 skinparam nodeStyle plain
-title C4: Контейнеры (C2) - Управление фермой (простая версия)
+title C2: Контейнеры - Управление фермой (упрощённая версия)
 
 actor "Зоотехник" as Zootech
 actor "Администратор" as Admin
 actor "Дежурный сотрудник" as LocalOperator
 
-node "ЦС АгроПромХ (существующая система)" as ExistingCS {
-  component "IoT-шлюз" as IoTGateway
-  component "Брокер Kafka" as Kafka
+rectangle "Облако (ЦС АгроПромХ)" #LightGray {
+  component "IoT-шлюз" as IoTGateway <<gRPC/HTTPS>>
+  component "Брокер Kafka" as Kafka <<Kafka Protocol>>
 }
 
-node "Система управления фермой" as FarmSystem {
-  
-  component "Локальное хранилище" as LocalStorage
-  
-  component "Видеоаналитика" as VideoAnalytics {
-    component "Нейросеть" as NeuralNet
+rectangle "Граница фермы" #LightPink {
+
+  node "Система управления фермой (монолит)" as FarmSystem {
+    
+    component "Локальное хранилище" as LocalStorage <<SQLite/PostgreSQL>>
+    
+    component "Видеоаналитика" as VideoAnalytics <<Python/Java/C++>> {
+      component "Нейросеть" as NeuralNet <<ONNX/TensorRT>>
+    }
+    
+    component "Управление устройствами" as DeviceControl <<Modbus/MQTT/OPC UA>>
+    
+    component "Аналитика данных" as DataAnalytics <<Python/Java>>
+    
+    component "Оповещение" as Alerting <<SMS/Telegram/WebSocket>>
+    
+    component "Аутентификация" as Auth <<OAuth2/JWT/Keycloak>>
+    
+    component "API" as API <<REST/GraphQL/WebSocket>>
+    
+    component "Синхронизация" as Sync <<gRPC/HTTPS+Zstd>>
   }
   
-  component "Управление устройствами" as DeviceControl
-  
-  component "Аналитика данных" as DataAnalytics
-  
-  component "Оповещение" as Alerting
-  
-  component "Аутентификация" as Auth
-  
-  component "API" as API
-  
-  component "Синхронизация" as Sync
+  node "Физические устройства" as Devices {
+    database "Кормушки/поилки" as Feeders <<Modbus/MQTT>>
+    database "Датчики" as Sensors <<Modbus/MQTT>>
+    database "Видеокамеры" as Cameras <<RTSP/ONVIF>>
+  }
 }
 
 ' Пользователи
@@ -182,37 +206,70 @@ Zootech --> Alerting : получает уведомления
 Zootech --> Auth : входит в систему
 
 Admin --> Auth : управляет правами
-LocalOperator --> Alerting : получает уведомления
+LocalOperator --> Alerting : получает уведомления (SMS/звук)
 
 ' Устройства на ферме
-DeviceControl --> "Кормушки и поилки" : команды
-"Датчики" --> DataAnalytics : телеметрия
-"Видеокамеры" --> VideoAnalytics : видеопоток
+Cameras --> VideoAnalytics : RTSP/ONVIF
+Sensors --> DataAnalytics : Modbus/MQTT
+Feeders --> DeviceControl : Modbus/MQTT (телеметрия)
+DeviceControl --> Feeders : Modbus/MQTT (команды)
 
 ' Внутренняя логика
-VideoAnalytics --> NeuralNet : распознавание
-VideoAnalytics --> Alerting : события (драка, задавливание)
-VideoAnalytics --> LocalStorage : сохраняет снимки
+VideoAnalytics --> NeuralNet : ONNX/TensorRT
+VideoAnalytics --> Alerting : события (внутренний вызов)
+VideoAnalytics --> LocalStorage : сохраняет снимки (S3/файловая система)
 
-DataAnalytics --> LocalStorage : сохраняет данные
-DataAnalytics --> Alerting : аномалии
+DataAnalytics --> LocalStorage : сохраняет данные (SQL)
+DataAnalytics --> Alerting : аномалии (внутренний вызов)
 
-DeviceControl --> LocalStorage : сохраняет команды
+DeviceControl --> LocalStorage : сохраняет команды (SQL)
 
-Alerting --> LocalOperator : SMS/звук (офлайн)
-Alerting --> Zootech : уведомления
+Alerting --> LocalOperator : SMS/GSM-модем (офлайн)
+Alerting --> Zootech : Telegram/WebSocket
 
-' Синхронизация с ЦС
+' Синхронизация с ЦС (задержка до 10 минут)
 LocalStorage --> Sync : данные на отправку
-Sync --> IoTGateway : синхронизация
+Sync --> IoTGateway : gRPC/HTTPS + Zstd
 
-' Существующая ЦС
-IoTGateway --> Kafka : телеметрия
-Kafka --> DataAnalytics : данные из ЦС
+' Облачная ЦС
+IoTGateway --> Kafka : Kafka Protocol
+Kafka --> DataAnalytics : Kafka Consumer
 
 ' Внешние системы
-Auth --> API : авторизация
-Sync --> API : данные для мобильного приложения
+Auth --> API : авторизация (JWT)
+Sync --> API : данные для мобильного приложения (REST/GraphQL)
 
 @enduml
 ```
+
+### <a name="_88stt5hww918"></a>**Недостатки, ограничения, риски**
+
+*Основное решение (распределенное)*
+
+Преимущества:
+
+- Высокая масштабируемость — каждый контекст масштабируется независимо
+- Отказоустойчивость — изоляция контекстов локализует сбои
+- Расширяемость без изменений существующего — новый функционал добавляется как отдельный контекст
+
+Недостатки и риски:
+
+- Высокая сложность разработки и развёртывания
+- Требуются эксперты по распределённым системам и Kafka
+- Высокие операционные затраты (кластер из сервисов)
+- Долгий вывод на рынок
+
+*Альтернативное решение (монолитное)*
+
+Преимущества:
+
+- Быстрый вывод на рынок
+- Низкий порог входа для команды — не требуются эксперты по распределённым системам
+- Минимальные операционные затраты — один сервер и одна база данных вместо кластера
+
+Недостатки и риски:
+
+- Низкая отказоустойчивость — падение любого компонента останавливает всю систему
+- Плохая расширяемость — изменения затрагивают весь монолит
+- Ограниченная масштабируемость
+- Невозможно гарантировать 99.95% доступности
