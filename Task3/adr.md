@@ -247,6 +247,75 @@ Zootech --> FilterManager : управление фильтрацией
 @enduml
 ```
 
+```plantuml
+@startuml C4_Sequence_Fight
+skinparam shadowing false
+title C4: Sequence —  Распознавание драки и оповещение
+
+actor "Зоотехник" as Zootech
+actor "Дежурный сотрудник" as LocalOperator
+participant "Видеокамера" as Camera
+participant "Edge-сервер (Мониторинг)" as Edge
+participant "Нейросеть" as NeuralNet
+participant "Локальное хранилище" as Storage
+participant "Локальная система оповещения" as Alerting
+participant "Менеджер синхронизации" as Sync
+participant "Облачная ЦС" as Cloud
+
+== Штатный режим (с интернетом) ==
+
+Camera -> Edge : RTSP-поток
+activate Edge
+
+Edge -> NeuralNet : кадры (ONNX/TensorRT)
+activate NeuralNet
+NeuralNet --> Edge : распознавание "драка"
+deactivate NeuralNet
+
+Edge -> Storage : сохранить снимки (MinIO)
+Edge -> Storage : сохранить событие (TimescaleDB)
+
+Edge -> Alerting : событие "драка"
+activate Alerting
+Alerting --> Zootech : Push/Telegram/WebSocket
+Alerting --> LocalOperator : Call/Push/Telegram/WebSocket
+deactivate Alerting
+
+Edge -> Sync : поставить в очередь
+Sync -> Cloud : gRPC/HTTPS+Zstd
+deactivate Edge
+
+== Офлайн-режим (без интернета) ==
+
+Camera -> Edge : RTSP-поток
+activate Edge
+
+Edge -> NeuralNet : кадры (ONNX/TensorRT)
+activate NeuralNet
+NeuralNet --> Edge : детекция "драка"
+deactivate NeuralNet
+
+Edge -> Storage : сохранить снимки (MinIO)
+Edge -> Storage : сохранить событие (TimescaleDB)
+
+Edge -> Alerting : событие "драка"
+activate Alerting
+Alerting --> LocalOperator : Call/SMS/GSM-модем
+deactivate Alerting
+
+Edge -> Sync : поставить в очередь (буфер)
+
+... интернет восстановлен ...
+
+Sync -> Cloud : gRPC/HTTPS+Zstd
+deactivate Edge
+
+@enduml
+```
+
+
+
+
 ### <a name="_3bfxc9a45514"></a>**Контекст Кормление**
 
 ```plantuml
